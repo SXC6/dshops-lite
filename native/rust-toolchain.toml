@@ -1,0 +1,10 @@
+# Single source of truth for the Rust toolchain: local runs and every CI job pick
+# this exact channel up from here instead of restating a version in YAML.
+#
+# Pinned to a version whose rustc actually executes on this machine: Smart App
+# Control blocked the 1.100.0 build by file hash (see README, "Smart App
+# Control"). 1.99.0 satisfies the crate's rust-version = "1.88".
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

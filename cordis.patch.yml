@@ -1,0 +1,39 @@
+# dshops-lite: one row, minimal surface.
+#
+# Deliberately NOT here: bundled bash/niubash payload, PTC (run_code/load_sdk),
+# progressive tool discovery, agent presets, TUI/panel integration, doc readers.
+# See README.md for why.
+- insert:
+    - id: dshops-lite
+      name: dshops-lite
+      config:
+        # ---- shell -------------------------------------------------------
+        # backend: 'auto' picks Git Bash when a working one is found, else
+        # PowerShell, else publishes no shell tool at all. An explicit value
+        # ('gitbash' | 'pwsh') is authoritative: if that backend cannot be
+        # proved to work, NO shell tool is published. There is no silent
+        # swap between backends, ever — that is what made a bad dsh-ops
+        # release spin the model.
+        #
+        # Set to 'pwsh' on this machine: PowerShell 7.5.4 is installed at
+        # C:\Program Files\PowerShell\7\pwsh.exe and is the operator's default
+        # terminal. Git Bash stays available by switching to 'gitbash' (or by
+        # 'auto', which prefers Git Bash).
+        shell:
+          backend: pwsh
+          # Empty means auto-discover. A path here is trusted verbatim.
+          gitbashPath: ''
+          pwshPath: ''
+          # Guard rails for the start-up self-test.
+          probeTimeoutMs: 15000
+          # After this many runtime spawn failures the backend is marked dead
+          # for the session and further calls fail fast with a terminal error.
+          maxSpawnFailures: 2
+
+        # ---- native file tools ------------------------------------------
+        # The worker binary. Empty means runtime/<platform>/ under this package.
+        workerPath: ''
+        # Per-call worker deadline; the worker itself caps at 30s.
+        toolTimeoutMs: 30000
+        # Refuse reads of credential-looking files (~/.ssh, .npmrc, ...).
+        denyCredentialReads: true

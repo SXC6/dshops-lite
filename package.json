@@ -1,0 +1,29 @@
+{
+  "name": "dshops-lite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A lean DSH plugin: native ops_* file tools over a Rust worker, plus one optional shell backend (Git Bash or PowerShell). No bundled bash payload.",
+  "license": "MIT",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "scripts",
+    "cordis.patch.yml",
+    "runtime",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.2-rc.1 <0.2.3-0"
+  }
+}

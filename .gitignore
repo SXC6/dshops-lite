@@ -1,0 +1,17 @@
+# Rust build output — 700+ MiB of LTO artifacts. Never commit; rebuild with:
+#   cd native && cargo build --release --locked
+native/target/
+
+# Node
+node_modules/
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+
+# Local scratch
+*.log

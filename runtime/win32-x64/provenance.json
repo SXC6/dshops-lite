@@ -1,0 +1,7 @@
+{
+    "version":  "0.1.0",
+    "target":  "win32-x64",
+    "executable":  "dsh-ops-worker.exe",
+    "sha256":  "678c6e621961884a301b1ed95f94f43ca5356712efe6fa47f193aa6d311246ad",
+    "source":  "Built from native/ in this repository (cargo build --release --locked)."
+}
