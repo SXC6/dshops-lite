@@ -1,6 +1,6 @@
 {
   "name": "dshops-lite",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "A lean DSH plugin: native ops_* file tools over a Rust worker, plus Git Bash as an optional default terminal. No bundled bash payload.",

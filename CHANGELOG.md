@@ -1,8 +1,13 @@
 # 变更记录
 
-格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。版本号以 `package.json` 为准，本次不升版本（仍是 `0.3.0`）。
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。版本号以 `package.json` 为准（当前 `0.3.1`）。
 
-## [Unreleased]
+## [0.3.1] - 2026-11-22
+
+### 接口
+
+- `ops_shell` 的输出 schema 不再只是 `{ type: 'object' }`，而是声明真实字段：`exitCode`（integer）、`stdout` / `stderr`（string）、`truncated`（array，元素只能是 `stdout` / `stderr`），四者均为 required。代码模式的消费方（如 `run_code`）可以按契约直接取值，不必猜形状——此前把 `stdout` 当成 `{ text }` 读取会静默拿到 `undefined`。模型侧渲染文本不变。
+- `runtime/win32-x64/provenance.json` 的 `version` 与 `package.json` 对齐（`0.3.1`）。该字段此前长期停在 `0.1.0`，且运行时只校验 target / executable / sha256，不校验版本，所以漂移是静默的。
 
 ### 行为变更
 

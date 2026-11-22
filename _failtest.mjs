@@ -376,6 +376,34 @@ function workerScript(entries) {
     check('a lossy stream says it was truncated', /stdout truncated at the collector cap/.test(rendered), rendered)
     check('...and the value carries the fact', Array.isArray(value.truncated) && value.truncated.includes('stdout'),
       JSON.stringify(value.truncated))
+
+    // The declared output contract must be the shape execute() really returns.
+    // A code-mode consumer reads these fields directly, so a declaration that
+    // drifted from the value is worse than no declaration: it reads as truth.
+    const schema = shellTool.output?.schema ?? {}
+    const declared = Object.keys(schema.properties ?? {}).sort()
+    const actual = Object.keys(value).sort()
+    check('ops_shell declares its output fields',
+      JSON.stringify(declared) === JSON.stringify(['exitCode', 'stderr', 'stdout', 'truncated']),
+      declared.join(','))
+    check('...and the declaration is exactly what execute() returns',
+      JSON.stringify(declared) === JSON.stringify(actual), `declared=${declared} actual=${actual}`)
+    check('...with every declared field required',
+      JSON.stringify([...(schema.required ?? [])].sort()) === JSON.stringify(declared),
+      JSON.stringify(schema.required))
+    check('...and "truncated" can only name the two streams',
+      JSON.stringify(schema.properties?.truncated?.items?.enum) === JSON.stringify(['stdout', 'stderr']),
+      JSON.stringify(schema.properties?.truncated?.items?.enum))
+    check('...and the declared field types match the returned values',
+      schema.properties?.exitCode?.type === 'integer'
+        && schema.properties?.stdout?.type === 'string'
+        && schema.properties?.stderr?.type === 'string'
+        && schema.properties?.truncated?.type === 'array'
+        && Number.isInteger(value.exitCode)
+        && typeof value.stdout === 'string'
+        && typeof value.stderr === 'string'
+        && Array.isArray(value.truncated),
+      JSON.stringify({ schema: Object.fromEntries(declared.map(k => [k, schema.properties[k]?.type])), value: { exitCode: typeof value.exitCode, stdout: typeof value.stdout, stderr: typeof value.stderr, truncated: Array.isArray(value.truncated) } }))
   }
 }
 

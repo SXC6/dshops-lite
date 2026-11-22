@@ -11,7 +11,7 @@
 
 ## 支持范围
 
-只对最新代码（当前 `0.3.0`）提供安全修复。本包是 `private: true` 的内部包，分发方式是 link 安装（见 `docs/BUILD.md` 的「安装与重载」），不从 npm registry 发布。
+只对最新代码（当前 `0.3.1`）提供安全修复。本包是 `private: true` 的内部包，分发方式是 link 安装（见 `docs/BUILD.md` 的「安装与重载」），不从 npm registry 发布。
 
 ## 这个包装了什么、能做什么
 

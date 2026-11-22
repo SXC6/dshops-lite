@@ -298,7 +298,33 @@ export function apply(ctx, config = {}) {
           required: ['command'],
         },
         output: {
-          schema: { type: 'object' },
+          // Declare the fields execute() actually returns. A code-mode consumer
+          // reads this object directly, and "type: object" alone leaves it to
+          // guess the shape (a nested {text} reader silently gets undefined).
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              exitCode: {
+                type: 'integer',
+                description: 'Exit status of the command. A run without one is reported as a shell failure instead.',
+              },
+              stdout: {
+                type: 'string',
+                description: 'Collected stdout, capped at shell.stdoutMaxBytes (default 262144).',
+              },
+              stderr: {
+                type: 'string',
+                description: 'Collected stderr, capped at shell.stderrMaxBytes (default 65536).',
+              },
+              truncated: {
+                type: 'array',
+                items: { type: 'string', enum: ['stdout', 'stderr'] },
+                description: 'Streams that hit their collector cap; empty when nothing was lost.',
+              },
+            },
+            required: ['exitCode', 'stdout', 'stderr', 'truncated'],
+          },
           render: (_args, value) => [{
             type: 'text',
             text: [
