@@ -168,5 +168,59 @@ walk(afterRefusal, node => { if (node.props?.role === 'status') status = node })
 check('a refused write surfaces a failure message',
   /refused the change|failed/i.test(String(status?.props?.children)), String(status?.props?.children))
 
+// ---- locale-aware fallback --------------------------------------------
+// The Host dictionary is optional (client.js registers it inside a try/catch),
+// so with a t() that echoes the key the page must still speak the locale it was
+// handed instead of always falling back to English.
+const zhSummary = JSON.stringify(render(component, { view: 'summary', t, locale: 'zh' }))
+check('a zh locale renders the Chinese summary', zhSummary.includes('默认终端：'), zhSummary)
+check('a zh locale does not fall back to the English summary', !zhSummary.includes('Default terminal:'), zhSummary)
+
+hookSlots.length = 0
+const zhPage = JSON.stringify(render(component, { view: 'page', form, t, locale: 'zh' }))
+check('a zh locale renders Chinese page copy', zhPage.includes('默认终端') && zhPage.includes('保存'),
+  zhPage.slice(0, 160))
+check('a zh locale page carries no English fallback copy',
+  !zhPage.includes('Default terminal') && !zhPage.includes('Save'), zhPage.slice(0, 160))
+
+// The Host may hand over a descriptor, a getter, or a regional tag instead.
+const objectSummary = JSON.stringify(render(component, { view: 'summary', t, locale: { current: 'zh' } }))
+const getterSummary = JSON.stringify(render(component, { view: 'summary', t, locale: () => ({ id: 'zh' }) }))
+check('an object or getter locale resolves to its language',
+  objectSummary.includes('默认终端：') && getterSummary.includes('默认终端：'), `${objectSummary} ${getterSummary}`)
+const regionalSummary = JSON.stringify(render(component, { view: 'summary', t, locale: 'zh-CN' }))
+check('a regional tag resolves to its baseline language', regionalSummary.includes('默认终端：'), regionalSummary)
+
+// Unknown and absent locales must not throw and must read as English.
+let deThrew = false
+let deText = ''
+try {
+  hookSlots.length = 0
+  deText = JSON.stringify(render(component, { view: 'page', form, t, locale: 'de' }))
+} catch {
+  deThrew = true
+}
+check('an unknown locale does not throw', deThrew === false)
+check('an unknown locale reads as English',
+  deText.includes('Default terminal') && !deText.includes('默认终端'), deText.slice(0, 160))
+
+let noLocaleThrew = false
+let noLocaleText = ''
+try {
+  hookSlots.length = 0
+  noLocaleText = JSON.stringify(render(component, { view: 'page', form, t }))
+} catch {
+  noLocaleThrew = true
+}
+check('a page without a locale does not throw', noLocaleThrew === false)
+check('a page without a locale reads as English',
+  noLocaleText.includes('Default terminal') && !noLocaleText.includes('默认终端'), noLocaleText.slice(0, 160))
+
+// Both dictionaries are one key set, so neither language can drift.
+const enKeys = Object.keys(localeRegistered.dictionary.en).sort()
+const zhKeys = Object.keys(localeRegistered.dictionary.zh).sort()
+check('the en and zh dictionaries keep identical key sets',
+  enKeys.length === 16 && zhKeys.join(',') === enKeys.join(','), `${enKeys.length} / ${zhKeys.length} keys`)
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`)
 process.exitCode = failures === 0 ? 0 : 1

@@ -62,8 +62,10 @@ export function buildConfig(Schema) {
     shell: Schema.object({
       gitbashPath: Schema.string().default('')
         .description('Absolute path to bash.exe. Empty means auto-discover.'),
-      probeTimeoutMs: Schema.number().step(1000).min(1000).default(3000)
+      probeTimeoutMs: Schema.number().step(1000).min(1000).max(15000).default(3000)
         .description('Deadline for the start-up self-test of each candidate.'),
+      commandTimeoutMs: Schema.number().step(1000).min(1000).max(600000).default(120000)
+        .description('Deadline for one ops_shell command; a command that outlives it is terminated.'),
       maxSpawnFailures: Schema.number().step(1).min(1).default(5)
         .description('Consecutive runtime failures before Git Bash is disabled for the session.'),
       stdoutMaxBytes: Schema.number().step(1024).min(4096).max(1048576).default(262144)
@@ -80,7 +82,10 @@ export function buildConfig(Schema) {
     maxResultBytes: Schema.number().step(1024).min(1024).max(131072).default(131072)
       .description('Result size budget in bytes for one ops_* call.'),
     denyCredentialReads: Schema.boolean().default(true)
-      .description('Refuse reads of credential-looking files (~/.ssh, .npmrc, ...).'),
+      // Mirrors the worker's own fence regex: id_rsa|dsa|ecdsa|ed25519,
+      // *credentials*.{json,yaml,yml,ini}, service-account*.json and .env*.
+      // It is a mistake guard by file NAME, not a permission check.
+      .description('Refuse reads of credential-looking file names (id_rsa, .env, *credentials*.json, service-account*.json).'),
     promptSection: Schema.boolean().default(true)
       .description('Add the ops_* routing note to the system prompt.'),
   }).description('dshops-lite configuration.')
@@ -165,15 +170,26 @@ export function apply(ctx, config = {}) {
   const disposers = []
   const keep = (disposer) => { if (typeof disposer === 'function') disposers.push(disposer) }
 
-  // One log line per event: the host's own log when there is a logger, stderr
-  // when this module runs in a plain Node process (the offline self-tests).
-  const note = (message) => {
-    if (typeof ctx.logger?.warn === 'function') ctx.logger.warn(message)
-    else console.warn(message)
+  // One log line per event: the host's own log when there is a logger, the
+  // console when this module runs in a plain Node process (the offline
+  // self-tests). The level matters: logging a successful registration as a
+  // warning made a healthy start-up read like a broken one.
+  const note = (message, level = 'info') => {
+    if (level === 'warn') {
+      if (typeof ctx.logger?.warn === 'function') ctx.logger.warn(message)
+      else console.warn(message)
+    } else if (typeof ctx.logger?.info === 'function') {
+      ctx.logger.info(message)
+    } else if (typeof ctx.logger?.warn === 'function') {
+      // A host logger without info still has to surface the line somewhere.
+      ctx.logger.warn(message)
+    } else {
+      console.info(message)
+    }
   }
 
   if (Config === undefined) {
-    note('dshops-lite: schemastery did not resolve, so the plugin page cannot edit the default terminal.')
+    note('dshops-lite: schemastery did not resolve, so the plugin page cannot edit the default terminal.', 'warn')
   }
 
   // ---- native worker ----------------------------------------------------
@@ -182,7 +198,7 @@ export function apply(ctx, config = {}) {
     worker = resolveWorker(PACKAGE_ROOT, config)
   } catch (error) {
     // No worker means no file tools. Say why once, leave the host untouched.
-    note(`dshops-lite: native worker unavailable, ops_* file tools are disabled. ${error.message}`)
+    note(`dshops-lite: native worker unavailable, ops_* file tools are disabled. ${error.message}`, 'warn')
   }
 
   const invoke = async (tool, args, { cwd, scope, readOnly, exec }) => {
@@ -204,7 +220,7 @@ export function apply(ctx, config = {}) {
       try {
         keep(ctx.tools.register(definition))
       } catch (error) {
-        note(`dshops-lite: could not register ${definition.name}: ${error.message}`)
+        note(`dshops-lite: could not register ${definition.name}: ${error.message}`, 'warn')
       }
     }
     note(`dshops-lite: registered native file tools from ${worker.detail}.`)
@@ -236,7 +252,7 @@ export function apply(ctx, config = {}) {
     const failedCandidates = resolution.tried.filter(attempt => !attempt.ok && !attempt.absent)
     const absentCount = resolution.tried.filter(attempt => attempt.absent).length
     for (const attempt of failedCandidates) {
-      note(`dshops-lite: shell candidate failed its self-test — ${attempt.file}: ${attempt.detail}`)
+      note(`dshops-lite: shell candidate failed its self-test — ${attempt.file}: ${attempt.detail}`, 'warn')
     }
     if (absentCount > 0) {
       note(`dshops-lite: ${absentCount} shell candidate path(s) not installed on this machine.`)
@@ -245,11 +261,11 @@ export function apply(ctx, config = {}) {
     if (configured !== '' && resolution.backend === null) {
       const attempt = resolution.tried.find(candidate => candidate.file === configured)
       note(`dshops-lite: the configured Git Bash path ${configured} did not pass`
-        + `${attempt === undefined ? '' : ` (${attempt.detail})`}.`)
+        + `${attempt === undefined ? '' : ` (${attempt.detail})`}.`, 'warn')
     }
     if (resolution.backend === null) {
       // The important branch: publishing nothing is the correct outcome here.
-      note(`dshops-lite: no shell tool published. ${resolution.detail}`)
+      note(`dshops-lite: no shell tool published. ${resolution.detail}`, state.terminal === 'pwsh' ? 'info' : 'warn')
       return
     }
     note(`dshops-lite: shell = ${resolution.label} (${resolution.file}); ops_shell will be published.`)
@@ -259,6 +275,12 @@ export function apply(ctx, config = {}) {
     const failureBudget = Number.isFinite(config.shell?.maxSpawnFailures)
       ? Math.max(1, Math.floor(config.shell.maxSpawnFailures))
       : 5
+    // A caller cancel is not the shell's fault: report it as a cancellation and
+    // never touch the consecutive-failure budget.
+    const cancelledError = () => new Error(
+      `The ${resolution.label} command was cancelled, so there is no result. `
+      + 'This is not counted as a shell failure; re-run the command if the work is still needed.'
+    )
     try {
       state.disposeTool = ctx.tools.register({
         name: 'ops_shell',
@@ -297,7 +319,12 @@ export function apply(ctx, config = {}) {
               + 'Do not retry it; use the host pwsh tool.'
             )
           }
+          // A caller cancel must not become a command result or a counted
+          // failure; sessionFacts can itself reject on an aborted signal, so
+          // check on both sides of it.
+          if (exec.signal?.aborted) throw cancelledError()
           const { cwd: sessionCwd, readOnly } = await sessionFacts(ctx, exec)
+          if (exec.signal?.aborted) throw cancelledError()
           // The worker enforces read-only for every file operation; a shell that
           // ignored it would be a hole straight through that promise. The host's
           // own pwsh tool keeps its sandbox for these sessions.
@@ -309,8 +336,47 @@ export function apply(ctx, config = {}) {
           }
           const cwd = typeof args.cwd === 'string' && args.cwd !== '' ? absoluteTarget(args.cwd, sessionCwd) : sessionCwd
           const argv = shell.argv(String(args.command ?? ''))
+          const timeoutMs = clamp(config.shell?.commandTimeoutMs, 1000, 600000, 120000)
+          // The subprocess seam has no deadline of its own: it only reacts to an
+          // abort. Own the deadline here so a hung command (ssh, vim, a stuck
+          // `git status`) cannot hold the turn until the host cancels, and fuse
+          // the caller's signal into the same controller so a host cancel still
+          // reaches the one child this call started.
+          const controller = new AbortController()
+          let timedOut = false
+          let deadlineError
+          let rejectDeadline
+          const deadline = new Promise((_resolve, reject) => { rejectDeadline = reject })
+          const timer = setTimeout(() => {
+            // A caller cancel already settled this call; do not relabel it.
+            if (controller.signal.aborted) return
+            timedOut = true
+            deadlineError = new Error(
+              `ops_shell terminated the command after ${timeoutMs} ms (shell.commandTimeoutMs) because it did not `
+              + 'finish. Narrow or shorten the command — add a limit, a filter or a path — then retry with a '
+              + 'smaller step. This deadline is not a shell failure and does not count against the failure budget.'
+            )
+            // Settle the call even for a seam that ignores the abort, then ask
+            // the seam to terminate the child.
+            rejectDeadline(deadlineError)
+            controller.abort(deadlineError)
+          }, timeoutMs)
+          timer.unref?.()
+          let rejectCancelled
+          const cancelled = new Promise((_resolve, reject) => { rejectCancelled = reject })
+          // Usually consumed by the race below; keep it observed even in the
+          // edge where the spawn throws before that race exists.
+          cancelled.catch(() => {})
+          const forwardAbort = () => {
+            controller.abort(exec.signal?.reason)
+            rejectCancelled(new Error('the ops_shell caller was cancelled'))
+          }
+          if (typeof exec.signal?.addEventListener === 'function') {
+            exec.signal.addEventListener('abort', forwardAbort, { once: true })
+          }
           let handle
           let outcome
+          let spawnError
           try {
             handle = ctx.subprocess.spawn({
               argv,
@@ -320,13 +386,30 @@ export function apply(ctx, config = {}) {
                 stderr: { maxBytes: clamp(config.shell?.stderrMaxBytes, 4096, 1048576, 65536) },
               },
               graceMs: clamp(config.shell?.graceMs, 0, 10000, 1000),
-              signal: exec.signal,
+              signal: controller.signal,
             })
-            outcome = await handle.done
+            outcome = await Promise.race([handle.done, deadline, cancelled])
           } catch (error) {
+            // Classified below: a spawn failure must be told apart from our own
+            // deadline and from a caller cancel before it may count.
+            spawnError = error
+          } finally {
+            clearTimeout(timer)
+            if (typeof exec.signal?.removeEventListener === 'function') {
+              exec.signal.removeEventListener('abort', forwardAbort)
+            }
+          }
+          // Three-way cause classification. The host's outcome deliberately
+          // carries no timeout or cancellation verdict, and a forced kill on
+          // Windows reports exit code 1 with no signal at all, so the cause has
+          // to come from the facts this scope owns: our timer and the caller
+          // signal.
+          if (timedOut) throw deadlineError
+          if (exec.signal?.aborted) throw cancelledError()
+          if (spawnError !== undefined) {
             // A spawn failure is the exact event that used to cascade. Record it,
             // and hand back a terminal error once the budget is spent.
-            throw shell.noteFailure(error)
+            throw shell.noteFailure(spawnError)
           }
           const read = (stream) => {
             try {
@@ -343,21 +426,23 @@ export function apply(ctx, config = {}) {
             stderr.lossy ? 'stderr' : '',
           ].filter(Boolean)
           const exitCode = outcome?.exitCode
-          // A non-zero status is the command's own result — `grep` finding
+          // Only a process that vanished without an exit code is a backend fault
+          // here. A non-zero status is the command's own result — `grep` finding
           // nothing, `cat` missing a file, an unknown command (exit 127) — and
           // must come back as a normal value. Treating its stderr text as a
           // backend failure retired a perfectly good shell after repeated
           // ordinary mistakes, which is the loop this plugin exists to prevent.
-          const backendBroken = exitCode === null || exitCode === undefined || outcome?.signal != null
-          if (backendBroken) {
-            throw shell.noteFailure(new Error(stderr.text.trim().split(/\r?\n/)[0] ?? `exit ${String(exitCode)}`))
+          if (exitCode === null || exitCode === undefined) {
+            throw shell.noteFailure(new Error(
+              stderr.text.trim().split(/\r?\n/)[0] ?? 'the process produced no exit code'
+            ))
           }
           shell.noteSuccess()
           return { exitCode, stdout: stdout.text, stderr: stderr.text, truncated }
         },
       })
     } catch (error) {
-      note(`dshops-lite: could not register ops_shell: ${error.message}`)
+      note(`dshops-lite: could not register ops_shell: ${error.message}`, 'warn')
     }
   }
 
@@ -390,7 +475,7 @@ export function apply(ctx, config = {}) {
         }))
       }
     } catch (error) {
-      note(`dshops-lite: could not add the routing prompt section: ${error.message}`)
+      note(`dshops-lite: could not add the routing prompt section: ${error.message}`, 'warn')
     }
   }
 
@@ -404,7 +489,7 @@ export function apply(ctx, config = {}) {
       child.effect(() => child.settings.configure({ auto: false }, ctx.fiber), 'dshops-lite: settings page')
     })
   } catch (error) {
-    note(`dshops-lite: could not declare the settings page policy: ${error.message}`)
+    note(`dshops-lite: could not declare the settings page policy: ${error.message}`, 'warn')
   }
 
   return () => {

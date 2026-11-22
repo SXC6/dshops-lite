@@ -465,6 +465,8 @@ function workerScript(entries) {
     check('scan-budget result does not say "(no matches)"', !rendered.includes('(no matches)'), rendered.split('\n')[0])
     check('scan-budget result says the search did not finish', /did not finish/.test(rendered))
     check('scan-budget result does not advise an offset retry', !/continue with offset/.test(rendered))
+    check('scan-budget result still says no continuation and to narrow the path',
+      /no continuation/.test(rendered) && /narrow the path/.test(rendered), rendered.split('\n').at(-1))
 
     const genuine = {
       status: 'completed', phase: 'verify', complete: true, truncated: false,
@@ -473,14 +475,23 @@ function workerScript(entries) {
     }
     const cleanRender = renderText(globDef, {}, genuine)
     check('a completed empty search still says "(no matches)"', cleanRender.includes('(no matches)'), cleanRender.trim())
+    check('a clean result mentions no truncation at all',
+      !/truncat|incomplete|scan budget|continue with offset|narrow the path/i.test(cleanRender), cleanRender.trim())
 
+    // The shipped worker reports a limit-truncated page as pageComplete:true — the
+    // page itself was fully rendered, only more rows remain. Resumability therefore
+    // has to come from the truncation cause; gating it on pageComplete made the
+    // real offset retry unreachable and told the model to re-search instead.
     const morePages = {
       status: 'completed', phase: 'verify', complete: false, truncated: true,
-      truncatedBy: 'row-limit', scanComplete: true, pageComplete: false,
+      truncatedBy: 'row-limit', scanComplete: true, pageComplete: true,
       items: ['a.js'], matched: 5, matchedObserved: 5, matchedTotal: 5, nextOffset: 1,
     }
     const pagedRender = renderText(globDef, {}, morePages)
-    check('a page-limited result does advise the real offset retry', /continue with offset=1/.test(pagedRender), pagedRender.trim())
+    check('a row-limited page (the real shape: pageComplete true) advises the real offset retry',
+      /continue with offset=1/.test(pagedRender), pagedRender.trim())
+    check('...and a resumable note does not contradict itself with a page/scan gap',
+      !/page incomplete|scan incomplete/.test(pagedRender), pagedRender.trim())
   }
 
   // grep files_with_matches: `matchedTotal` counts lines, `items` counts files.
@@ -705,15 +716,14 @@ function workerScript(entries) {
   if (batch) {
     const parameters = batch.parameters ?? {}
     const operations = parameters.properties?.operations
-    const expectedOps = [
-      'inspect_local_file', 'read_files', 'glob', 'grep', 'stat', 'write_file',
-      'edit_file', 'replace', 'diff', 'copy', 'move', 'remove',
-    ]
+    // Only operations whose value survives a one-line summary are chainable: a
+    // read's remaining lines could not be returned, so reads are rejected.
+    const expectedOps = ['stat', 'write_file', 'edit_file', 'replace', 'diff', 'copy', 'move', 'remove']
     check('ops_batch advertises operations as an array', operations?.type === 'array')
     check('...whose items require op and args',
       JSON.stringify(operations?.items?.required) === JSON.stringify(['op', 'args']),
       JSON.stringify(operations?.items?.required))
-    check('...with exactly the 12 chainable operations as its enum',
+    check('...with exactly the 8 chainable operations as its enum',
       JSON.stringify(operations?.items?.properties?.op?.enum) === JSON.stringify(expectedOps),
       JSON.stringify(operations?.items?.properties?.op?.enum))
     check('...and batch itself is not chainable (no recursion)',
@@ -721,6 +731,9 @@ function workerScript(entries) {
     check('ops_batch advertises stopOnError as a boolean',
       parameters.properties?.stopOnError?.type === 'boolean')
     check('ops_batch requires operations', JSON.stringify(parameters.required) === JSON.stringify(['operations']))
+    check('...and the description says reads are rejected because no output is returned',
+      /Read operations/.test(batch.description) && /rejected/.test(batch.description)
+        && /no operation output/.test(batch.description), batch.description.slice(0, 140))
     // The 1-32 bound is enforced by execute() before any worker starts, so the
     // schema needs no array keywords. Parameters are projected to the model as
     // they are, so keeping them to the supported subset avoids expressing a
@@ -738,6 +751,8 @@ function workerScript(entries) {
       ['an unknown operation name', { operations: [{ op: 'frobnicate', args: {} }] }, /no operation "frobnicate"/],
       ['an ops_-prefixed operation name', { operations: [{ op: 'ops_stat', args: { path: 'x' } }] }, /no operation "ops_stat"/],
       ['a nested ops_batch operation', { operations: [{ op: 'batch', args: { operations: [] } }] }, /no operation "batch"/],
+      ['a read operation (glob)', { operations: [{ op: 'glob', args: { pattern: ['*'] } }] },
+        /no operation "glob".*Allowed operations: stat, write_file, edit_file, replace, diff, copy, move, remove/],
     ]
     for (const [label, args, pattern] of badBatches) {
       let message = ''
@@ -800,8 +815,8 @@ function workerScript(entries) {
     // -- a batch actually stops at the first failure when asked -----------
     const script = workerScript([
       { value: { status: 'completed', path: path.resolve('package.json'), exists: true, bytes: 934, lineCount: 1, revision: 'r1' } },
-      { value: { status: 'error', error: { code: 'NOT_FOUND', message: 'inspect_local_file: missing', nextAction: 'Check the path.' } } },
-      { value: { status: 'completed', items: ['lib/shell.js'], matched: 1, matchedTotal: 1 } },
+      { value: { status: 'error', error: { code: 'NOT_FOUND', message: 'remove: missing', nextAction: 'Check the path.' } } },
+      { value: { status: 'completed', copied: true } },
     ])
     const stopHarness = harness({ subprocess: script })
     apply(stopHarness.ctx, { defaultTerminal: 'pwsh' })
@@ -810,8 +825,8 @@ function workerScript(entries) {
     const stopValue = await stopBatch.execute({
       operations: [
         { op: 'stat', args: { path: 'package.json' } },
-        { op: 'inspect_local_file', args: { path: 'no-such-file.txt' } },
-        { op: 'glob', args: { pattern: ['lib/*.js'] } },
+        { op: 'remove', args: { path: 'no-such-file.txt', expectedRevision: 'r1' } },
+        { op: 'copy', args: { path: 'lib/shell.js', to: 'lib/shell.copy.js', expectedRevision: 'r1' } },
       ],
       stopOnError: true,
     }, stopExec)
@@ -828,14 +843,31 @@ function workerScript(entries) {
     check('...the batch passed operations through the single-tool normalize',
       script.requests[0]?.request?.tool === 'stat'
         && path.isAbsolute(script.requests[0]?.request?.args?.path ?? '')
-        && script.requests[1]?.request?.tool === 'inspect_local_file',
+        && script.requests[1]?.request?.tool === 'remove',
       JSON.stringify(script.requests.map(r => r?.request?.tool)))
     const stopRendered = renderText(stopBatch, { operations: [] }, stopValue)
     check('...and its rendering explains the skipped operation count',
       stopRendered.split('\n').at(-1) === '[stopped at operation 2; 1 remaining operation(s) skipped]',
       stopRendered.split('\n').at(-1))
     check('...and its rendering marks the failed operation FAILED',
-      /^\[2\] inspect_local_file FAILED — NOT_FOUND: /m.test(stopRendered), stopRendered)
+      /^\[2\] remove FAILED — NOT_FOUND: /m.test(stopRendered), stopRendered)
+
+    // -- a summary cut at 240 characters must show the cut -----------------
+    // Long paths are the easiest real way to overflow one line; the ellipsis is
+    // what keeps a batch summary from reading like a complete value.
+    const longPath = 'd'.repeat(300)
+    const longHarness = harness({
+      subprocess: workerScript([
+        { value: { status: 'completed', path: longPath, exists: true, bytes: 1, lineCount: 1, revision: 'r1' } },
+      ]),
+    })
+    apply(longHarness.ctx, { defaultTerminal: 'pwsh' })
+    const longValue = await longHarness.registered.get('ops_batch').execute({
+      operations: [{ op: 'stat', args: { path: 'long.txt' } }],
+    }, stopExec)
+    const longSummary = longValue.results[0]?.summary ?? ''
+    check('a batch summary longer than 240 characters shows the cut with an ellipsis',
+      longSummary.length === 241 && longSummary.endsWith('…'), `${longSummary.length} chars`)
 
     // -- a transport fault throws the whole batch: no partial success -----
     let transportThrew = false
@@ -849,7 +881,7 @@ function workerScript(entries) {
       await brokenHarness.registered.get('ops_batch').execute({
         operations: [
           { op: 'stat', args: { path: 'package.json' } },
-          { op: 'glob', args: { pattern: ['lib/*.js'] } },
+          { op: 'copy', args: { path: 'lib/shell.js', to: 'lib/shell.copy.js', expectedRevision: 'r1' } },
         ],
       }, stopExec)
       transportReturned = true
@@ -868,7 +900,7 @@ function workerScript(entries) {
       await exitHarness.registered.get('ops_batch').execute({
         operations: [
           { op: 'stat', args: { path: 'package.json' } },
-          { op: 'glob', args: { pattern: ['lib/*.js'] } },
+          { op: 'copy', args: { path: 'lib/shell.js', to: 'lib/shell.copy.js', expectedRevision: 'r1' } },
         ],
       }, stopExec)
     } catch (error) {

@@ -35,6 +35,10 @@
           gitbashPath: ''
           # Deadline for the start-up self-test of one candidate (ms).
           probeTimeoutMs: 3000
+          # Per-command deadline for one ops_shell run (ms). A command that
+          # outlives it is terminated and reported as a deadline — never as a
+          # shell failure, and it does not count against maxSpawnFailures.
+          commandTimeoutMs: 120000
           # After this many consecutive runtime failures ops_shell is retired
           # for the session and further calls fail fast with a terminal error.
           maxSpawnFailures: 5

@@ -60,11 +60,40 @@ window.__ModuleLoader__.load({
       },
     }
 
-    /** Copy for one key: the Host's dictionary first, then this file's fallback. */
-    const translator = (t) => (key) => {
+    /** A locale is a tag, a getter, or a descriptor such as { current }. */
+    const readLocale = (value, depth = 0) => {
+      try {
+        if (typeof value === 'string') return value.trim() === '' ? undefined : value
+        if (typeof value === 'function' && depth < 3) return readLocale(value(), depth + 1)
+        if (value !== null && typeof value === 'object' && depth < 3) {
+          for (const field of ['current', 'id', 'locale']) {
+            const found = readLocale(value[field], depth + 1)
+            if (typeof found === 'string') return found
+          }
+        }
+      } catch {
+        // A Host getter that throws means "no locale signal", not a broken page.
+      }
+      return undefined
+    }
+
+    /** The language this page speaks: the Host's tag when this file ships it, else English. */
+    const resolveLocale = (props, snapshot) => {
+      const tag = readLocale(props && props.locale)
+        ?? readLocale(snapshot && snapshot.locale)
+        ?? readLocale(props && props.snapshot && props.snapshot.locale)
+      if (typeof tag !== 'string') return 'en'
+      const primary = tag.trim().toLowerCase().split(/[-_]/)[0]
+      return Object.prototype.hasOwnProperty.call(FALLBACK, primary) ? primary : 'en'
+    }
+
+    /** Copy for one key: the Host's dictionary, then the active locale, then English. */
+    const translator = (t, locale) => (key) => {
       const fromHost = typeof t === 'function' ? t(key) : undefined
       if (typeof fromHost === 'string' && fromHost !== '' && fromHost !== key) return fromHost
-      return FALLBACK.en[key] ?? key
+      const localized = FALLBACK[locale]
+      if (localized && typeof localized[key] === 'string') return localized[key]
+      return typeof FALLBACK.en[key] === 'string' ? FALLBACK.en[key] : key
     }
 
     const color = {
@@ -116,9 +145,8 @@ window.__ModuleLoader__.load({
     function ConfigPage(props) {
       const { view } = props
       const form = props.form
-      const tx = translator(props.t)
-
       const snapshot = form && form.state ? form.state : undefined
+      const tx = translator(props.t, resolveLocale(props, snapshot))
       const hostValue = snapshot && snapshot.value ? snapshot.value.defaultTerminal : undefined
       // Hooks run before the summary short-circuit: React requires the same hook
       // order on every render, and the Host may switch this entry between views.
@@ -216,7 +244,7 @@ window.__ModuleLoader__.load({
         try {
           ctx.effect(() => locale.register('dshopsLite', { en: FALLBACK.en, zh: FALLBACK.zh }), 'dshops-lite: locale')
         } catch (error) {
-          // The page still renders with this file's English fallback copy.
+          // The page still renders with this file's own fallback copy.
           console.warn('dshops-lite: could not register the locale dictionary', error)
         }
       }
