@@ -1,26 +1,49 @@
 {
   "name": "dshops-lite",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "A lean DSH plugin: native ops_* file tools over a Rust worker, plus one optional shell backend (Git Bash or PowerShell). No bundled bash payload.",
+  "description": "A lean DSH plugin: native ops_* file tools over a Rust worker, plus Git Bash as an optional default terminal. No bundled bash payload.",
   "license": "MIT",
   "main": "index.js",
+  "scripts": {
+    "test": "node --check client.js && node _selftest.mjs && node _failtest.mjs && node _clienttest.mjs"
+  },
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
+    "client.js",
     "lib",
+    "locale",
+    "docs",
     "scripts",
     "cordis.patch.yml",
     "runtime",
-    "README.md"
+    "README.md",
+    "OPTIMIZATION.md",
+    "_selftest.mjs",
+    "_failtest.mjs",
+    "_clienttest.mjs"
   ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": ">=3.19.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": {
+      "optional": true
     }
   },
   "engines": {

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dshops-lite",
+    "description": "Lean native ops_* file/search tools plus an optional Git Bash default terminal (no bundled bash payload). On Windows, switch the default terminal under Plugins → dshops-lite → Configure; the Git Bash terminal requires Git for Windows, a shell that cannot start is never published, and ops_shell is retired for the session after 5 consecutive failures (configurable)."
+  }
+}

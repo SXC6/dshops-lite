@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dshops-lite",
+    "description": "精简的原生 ops_* 文件/搜索工具，外加可选的 Git Bash 默认终端（不打包 bash 载荷）。在 Windows 上，从侧边栏「插件」→ dshops-lite →「配置」切换默认终端；Git Bash 终端需已安装 Git for Windows，探活不通过的 shell 不会被发布，ops_shell 连续失败达上限（默认 5 次）后本会话停用。"
+  }
+}

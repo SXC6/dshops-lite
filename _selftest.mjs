@@ -51,7 +51,7 @@ const ctx = {
   logger: { warn: (m) => warnings.push(m) },
 }
 
-apply(ctx, { shell: { backend: 'auto' } })
+apply(ctx, { defaultTerminal: 'gitbash' })
 
 console.log('=== warnings from apply() ===')
 for (const w of warnings) console.log('  ', w)
@@ -79,6 +79,20 @@ async function run(name, args, options = {}) {
     if (options.expectThrow) {
       failures += 1
       console.log(`    !! expected a hard failure, but it returned normally`)
+    } else if (typeof options.verify === 'function') {
+      // `verify` returns true when the expectation holds, or a short reason.
+      let problem
+      try {
+        problem = options.verify(value, text)
+      } catch (error) {
+        problem = `verify threw: ${error.message}`
+      }
+      if (problem === true) {
+        console.log(`    PASS — ${options.expect ?? 'expectation met'}`)
+      } else {
+        failures += 1
+        console.log(`    FAIL — ${typeof problem === 'string' ? problem : (options.expect ?? 'expectation failed')}`)
+      }
     }
   } catch (error) {
     if (options.expectThrow) {
@@ -97,6 +111,34 @@ await run('ops_grep', { pattern: 'resolveShell', glob: ['**/*.js'], outputMode: 
 await run('ops_inspect_local_file', { path: 'lib/shell.js', offset: 1, limit: 3 })
 await run('ops_read_files', { files: [{ path: 'package.json', limit: 2 }, { path: 'cordis.patch.yml', limit: 2 }] })
 await run('ops_inspect_local_file', { path: 'no-such-file.txt' }, { expectThrow: true })
+
+// A real batch through the real worker: two operations succeed, the missing
+// file fails, and the batch as a whole must still return normally — one
+// operation's failure must not throw away the other two results.
+await run('ops_batch', {
+  operations: [
+    { op: 'stat', args: { path: 'package.json' } },
+    { op: 'inspect_local_file', args: { path: 'no-such-file.txt' } },
+    { op: 'glob', args: { pattern: ['lib/*.js'], limit: 3 } },
+  ],
+}, {
+  expect: '2 successes, 1 failure, rendered [2/3 operations succeeded]',
+  verify(value, text) {
+    const results = Array.isArray(value?.results) ? value.results : []
+    const succeeded = results.filter(item => item.ok === true).length
+    const failed = results.filter(item => item.ok === false).length
+    if (value?.total !== 3) return `total=${value?.total}`
+    if (value?.failed !== 1) return `failed=${value?.failed}`
+    if (value?.stopped !== false) return `stopped=${value?.stopped}`
+    if (results.length !== 3) return `results=${results.length}`
+    if (succeeded !== 2 || failed !== 1) return `succeeded=${succeeded} failed=${failed}`
+    if (!/^\[2\/3 operations succeeded\]$/m.test(text)) return 'the summary line does not say [2/3 operations succeeded]'
+    if (!/^\[2\] inspect_local_file FAILED — /m.test(text)) return 'the missing-file operation was not rendered as FAILED'
+    if (!results.some(item => item.ok === false && /NOT_FOUND/.test(item.code ?? ''))) return 'the failure kept no worker code'
+    return true
+  },
+})
+
 await run('ops_shell', { command: 'echo hello-from-$0' })
 
 console.log(`\n=== done: ${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`} ===`)

@@ -94,10 +94,10 @@ dsh-ops 的**机制**是对的（有界输出 / 分页 / 批量 / 诚实状态�
 
 ## 7. 待确认 / 风险
 
-- **宿主版本窗口极窄。** `peerDependencies` 写死 `@deepseek-ai/dsh >=0.2.2-rc.1 <0.2.3-0`，`engines.dsh` 相同。宿主一旦进 0.3，这个插件直接装不上/不激活。lite 版必须按实际宿主版本对齐（本机 profile 未安装 dsh-ops，`DSH_INSTALL_DIR` 指向 asar 内部，宿主版本未能直接读出）。
+- **宿主版本窗口极窄。** `peerDependencies` 写死 `@deepseek-ai/dsh >=0.2.2-rc.1 <0.2.3-0`，`engines.dsh` 相同。宿主一旦进 0.3，这个插件直接装不上/不激活。lite 版必须按实际宿主版本对齐（本环境 profile 未安装 dsh-ops，`DSH_INSTALL_DIR` 指向 asar 内部，宿主版本未能直接读出）。
 - **文档有漂移。** `docs/内部架构.md` 称"内置配置使用 `hideOfficialTools: false`"，但 `cordis.patch.yml` 与 `src/settings/merged.ts` 的默认值都是 `true`。以代码为准。
 - **复杂度是主要维护风险。** 23.8k TS + 45.6k Rust，测试量是源码的 1.4 倍；lite 版若照搬分层会立刻失去"轻"的意义。
 
 ## 附：本地状态
 
-- 源码树取自 codeload 归档（github.com 的 git pack 传输在本机网络下会卡在 `index-pack`），已 `git init` 并提交为快照 commit `adad2df`，`origin` 指向 upstream。需要真实历史时执行 `git fetch --depth 1 origin main` 后 `git reset --hard FETCH_HEAD`。
+- 源码树取自 codeload 归档（github.com 的 git pack 传输在本环境网络下会卡在 `index-pack`），已 `git init` 并提交为快照 commit `adad2df`，`origin` 指向 upstream。需要真实历史时执行 `git fetch --depth 1 origin main` 后 `git reset --hard FETCH_HEAD`。

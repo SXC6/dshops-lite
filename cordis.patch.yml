@@ -2,38 +2,56 @@
 #
 # Deliberately NOT here: bundled bash/niubash payload, PTC (run_code/load_sdk),
 # progressive tool discovery, agent presets, TUI/panel integration, doc readers.
-# See README.md for why.
+# See OPTIMIZATION.md for why.
+#
+# Buffers, deadlines and the failure budget are configuration, not constants:
+# the values below are the shipped defaults; the schema constrains their range,
+# and the plugin clamps again where it uses them.
 - insert:
     - id: dshops-lite
       name: dshops-lite
       config:
-        # ---- shell -------------------------------------------------------
-        # backend: 'auto' picks Git Bash when a working one is found, else
-        # PowerShell, else publishes no shell tool at all. An explicit value
-        # ('gitbash' | 'pwsh') is authoritative: if that backend cannot be
-        # proved to work, NO shell tool is published. There is no silent
-        # swap between backends, ever — that is what made a bad dsh-ops
-        # release spin the model.
+        # ---- default terminal -------------------------------------------
+        # This is the field the plugin page edits (sidebar Plugins → dshops-lite
+        # → Configure; Settings → Built-in plugins is a read-only inventory). It
+        # is declared volatile, so a change is
+        # applied to the running instance immediately instead of remounting
+        # the plugin.
         #
-        # Set to 'pwsh' on this machine: PowerShell 7.5.4 is installed at
-        # C:\Program Files\PowerShell\7\pwsh.exe and is the operator's default
-        # terminal. Git Bash stays available by switching to 'gitbash' (or by
-        # 'auto', which prefers Git Bash).
+        #   pwsh    (default) the host pwsh tool is the terminal, exactly as
+        #           with this plugin switched off; ops_shell is NOT published.
+        #   gitbash Git Bash becomes the default terminal through ops_shell,
+        #           and the host pwsh tool stays available beside it.
+        #
+        # The gitbash value publishes nothing when Git Bash cannot be proved to
+        # run — absence beats a broken tool. There is no silent swap between
+        # terminals, ever.
+        defaultTerminal: pwsh
+
+        # ---- Git Bash discovery -----------------------------------------
         shell:
-          backend: pwsh
-          # Empty means auto-discover. A path here is trusted verbatim.
+          # Empty means auto-discover (Program Files, PATH's git.exe, scoop,
+          # chocolatey, msys64). A path here is trusted verbatim.
           gitbashPath: ''
-          pwshPath: ''
-          # Guard rails for the start-up self-test.
-          probeTimeoutMs: 15000
-          # After this many runtime spawn failures the backend is marked dead
+          # Deadline for the start-up self-test of one candidate (ms).
+          probeTimeoutMs: 3000
+          # After this many consecutive runtime failures ops_shell is retired
           # for the session and further calls fail fast with a terminal error.
-          maxSpawnFailures: 2
+          maxSpawnFailures: 5
+          # Per-stream collector caps for one ops_shell command (bytes).
+          stdoutMaxBytes: 262144
+          stderrMaxBytes: 65536
+          # Grace period before a cancelled command is terminated (ms).
+          graceMs: 1000
 
         # ---- native file tools ------------------------------------------
         # The worker binary. Empty means runtime/<platform>/ under this package.
         workerPath: ''
-        # Per-call worker deadline; the worker itself caps at 30s.
+        # Per-call worker deadline; the request envelope caps it at 30 s.
         toolTimeoutMs: 30000
+        # Result size budget for one ops_* call (bytes).
+        maxResultBytes: 131072
         # Refuse reads of credential-looking files (~/.ssh, .npmrc, ...).
         denyCredentialReads: true
+        # Routing note in the system prompt. Set false to add no text at all.
+        promptSection: true
