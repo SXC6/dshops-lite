@@ -330,5 +330,128 @@ console.log('\n### ops_shell (stub): a mid-flight cancel beats a Windows-style e
   }
 }
 
+// ---- output-contract conformance ---------------------------------------
+// Every tool declares its output shape so a code-mode consumer reads a typed
+// contract instead of an untyped bag. A declaration that drifts from the real
+// value is worse than none, because it reads as truth — so validate the real
+// worker result against the declaration for every tool.
+{
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), 'dshops-contract-'))
+  const P = (name) => path.join(box, name)
+  const typeOf = (v) => (Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v)
+
+  /** Minimal subset of JSON Schema: type, required, properties, items, oneOf. */
+  function validate(schema, value, at, problems) {
+    if (schema === undefined || schema === true) return
+    if (Array.isArray(schema.oneOf)) {
+      const branches = schema.oneOf.map((sub) => {
+        const found = []
+        validate(sub, value, at, found)
+        return found
+      })
+      if (!branches.some((found) => found.length === 0)) {
+        problems.push(`${at}: matched no oneOf branch (${JSON.stringify(value)?.slice(0, 80)})`)
+      }
+      return
+    }
+    const want = schema.type
+    if (typeof want === 'string') {
+      const actual = typeOf(value)
+      const fits = want === 'integer'
+        ? typeof value === 'number' && Number.isInteger(value)
+        : want === 'number' ? actual === 'number' : want === actual
+      if (!fits) problems.push(`${at}: declared ${want}, got ${actual}`)
+    }
+    if (value !== null && typeof value === 'object') {
+      for (const key of schema.required ?? []) {
+        if (!(key in value)) problems.push(`${at}: required "${key}" missing`)
+      }
+      for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+        if (key in value && value[key] !== undefined) validate(sub, value[key], `${at}.${key}`, problems)
+      }
+    }
+    if (schema.items !== undefined && Array.isArray(value)) {
+      value.forEach((item, index) => validate(schema.items, item, `${at}[${index}]`, problems))
+    }
+  }
+
+  const call = async (name, args) => {
+    const tool = registered.get(name)
+    if (tool === undefined) throw new Error(`${name} is not registered`)
+    return tool.execute(args, exec)
+  }
+  const conform = async (name, args) => {
+    const tool = registered.get(name)
+    const value = await call(name, args)
+    const problems = []
+    validate(tool.output?.schema, value, name, problems)
+    check(`${name}: the value matches its declared output schema`, problems.length === 0, problems.join('; '))
+    return value
+  }
+
+  try {
+    fs.mkdirSync(P('sub'))
+    fs.writeFileSync(P('a.txt'), 'alpha\nbeta\ngamma\n')
+    fs.writeFileSync(P('b.js'), 'import x from "y"\nconst TOKEN = 1\n')
+    fs.writeFileSync(P('sub/c.md'), '# title\n')
+    fs.writeFileSync(P('big.txt'), Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n'))
+
+    await conform('ops_stat', { path: P('a.txt') })
+    await conform('ops_stat', { path: P('missing.txt') })
+    await conform('ops_inspect_local_file', { path: P('a.txt'), limit: 2 })
+    await conform('ops_inspect_local_file', { path: P('a.txt'), encoding: 'hex', limit: 1 })
+    await conform('ops_read_files', { files: [{ path: P('a.txt'), limit: 1 }, { path: P('b.js'), limit: 1 }] })
+    await conform('ops_read_files', { files: [{ path: P('a.txt'), limit: 1 }, { path: P('missing.txt') }] })
+    await conform('ops_glob', { path: box, pattern: ['*.txt'] })
+    await conform('ops_glob', { path: box, pattern: ['**/*'], outputMode: 'details' })
+    await conform('ops_glob', { path: box, pattern: ['*.txt'], limit: 1 })
+    await conform('ops_grep', { path: box, pattern: 'alpha' })
+    await conform('ops_grep', { path: box, pattern: 'TOKEN', outputMode: 'files_with_matches' })
+    await conform('ops_grep', { path: box, pattern: 'line', outputMode: 'count' })
+    await conform('ops_grep', { path: box, pattern: 'nothing-matches-this' })
+    await conform('ops_diff', { path: P('a.txt'), content: 'alpha\nGAMMA\n' })
+    await conform('ops_batch', { operations: [{ op: 'stat', args: { path: P('a.txt') } }] })
+    await conform('ops_batch', {
+      operations: [
+        { op: 'stat', args: { path: P('a.txt') } },
+        { op: 'remove', args: { path: P('missing.txt'), expectedRevision: '0'.repeat(64) } },
+      ],
+    })
+
+    await conform('ops_write_file', { path: P('w.txt'), content: 'one\ntwo\n', expectedRevision: 'absent' })
+    const rev = async (p) => (await call('ops_stat', { path: p })).revision
+    await conform('ops_edit_file', { path: P('w.txt'), expectedRevision: await rev(P('w.txt')), edits: [{ oldText: 'two', newText: 'TWO' }] })
+    await conform('ops_replace', { path: box, pattern: 'ONE', replacement: 'one', glob: ['w.txt'], dryRun: true })
+    await conform('ops_copy', { path: P('w.txt'), to: P('w2.txt'), expectedRevision: await rev(P('w.txt')) })
+    await conform('ops_move', { path: P('w2.txt'), to: P('w3.txt'), expectedRevision: await rev(P('w2.txt')) })
+    await conform('ops_remove', { path: P('w3.txt'), expectedRevision: await rev(P('w3.txt')) })
+
+    // A miss carries no `path` in the worker's value, and printing the
+    // literal "undefined" at the model is noise it may read as a fact.
+    const missing = await call('ops_stat', { path: P('nope.txt') })
+    const missingText = registered.get('ops_stat').output.render({ path: P('nope.txt') }, missing)[0].text
+    check('ops_stat on a miss echoes the path instead of "undefined"',
+      missingText.includes(P('nope.txt')) && !/undefined/.test(missingText), missingText.split('\n')[0])
+
+    // ops_shell is published here (Git Bash proved out) and declares its own
+    // contract, so it has to hold too.
+    await conform('ops_shell', { command: 'echo contract' })
+  } finally {
+    fs.rmSync(box, { recursive: true, force: true })
+  }
+
+  // A tool added without a contract would silently fall back to an untyped bag,
+  // which is the exact hole this section closes.
+  for (const [name, tool] of registered) {
+    const properties = tool.output?.schema?.properties
+    check(`${name}: declares an output contract`,
+      properties !== undefined && Object.keys(properties).length > 0,
+      JSON.stringify(tool.output?.schema ?? null).slice(0, 90))
+  }
+}
+
 console.log(`\n=== done: ${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`} ===`)
 process.exitCode = failures === 0 ? 0 : 1

@@ -1,5 +1,5 @@
 {
-    "version":  "0.3.1",
+    "version":  "0.3.2",
     "target":  "win32-x64",
     "executable":  "dsh-ops-worker.exe",
     "sha256":  "868e52b1eaa2ea6d0617f11d04003269b3070126e6186c29dca80d2a72097d11",

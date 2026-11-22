@@ -1,6 +1,22 @@
 # 变更记录
 
-格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。版本号以 `package.json` 为准（当前 `0.3.1`）。
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。版本号以 `package.json` 为准（当前 `0.3.2`）。
+
+## [0.3.2] - 2026-11-22
+
+### 接口
+
+- 12 个文件工具与 `ops_batch` 的输出 schema 不再只是 `{ type: 'object' }`：现在声明真实字段与类型（13 份契约，约 16 KB）。这笔字节只落在代码模式（PTC）的 SDK 声明上——原生路径仍读 `output.render` 的文本，模型侧提示词不变。
+- 契约保持开放（`additionalProperties: true`）：worker 还会输出 `skipped` / `scannedFiles` / `skipReasons` 等诊断计数，封闭成白名单会变成「worker 一加字段就撒谎」的契约。`required` 只列每种观测形状里都实际存在的字段，避免宿主校验拒绝合法结果。
+
+### 修复
+
+- `ops_stat` 查询不存在的路径时会向模型渲染出 `path: undefined`：worker 对 miss 不返回 `path`，而渲染器直接插值。现在回落到调用参数里的路径。
+- `ops_inspect_local_file` 的 hex 视图结果条目用 `offset`（0-based 字节偏移）而非 `line`，契约改用 `oneOf` 分别描述文本行与 hex 行两种形状。
+
+### 测试
+
+- `_selftest.mjs` 新增输出契约一致性校验：对 13 个工具跑真实 worker 调用，用最小 JSON Schema 子集（type / required / properties / items / oneOf）验证返回值符合声明，并断言每个已注册工具都必须声明契约。契约缺失或类型写错都会失败（红绿已验证）。
 
 ## [0.3.1] - 2026-11-22
 
