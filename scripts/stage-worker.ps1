@@ -37,6 +37,10 @@ $receipt = [ordered]@{
   source     = 'Built from native/ in this repository (cargo build --release --locked).'
 }
 $json = $receipt | ConvertTo-Json -Depth 4
+# LF only: .gitattributes declares '*.json text eol=lf', and ConvertTo-Json
+# emits CRLF, so a CRLF receipt would show up as a whole-file diff on every
+# restage. Normalise here instead of letting git rewrite it later.
+$json = $json -replace "`r`n", "`n"
 # No BOM: JSON.parse rejects one, and Windows editors add it by default.
 [System.IO.File]::WriteAllText(
   (Join-Path $dir 'provenance.json'),

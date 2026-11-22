@@ -15,9 +15,6 @@ fn may_mutate(request: &Request) -> bool {
             request.tool.as_str(),
             "inspect_local_file"
                 | "read_files"
-                | "read_table"
-                | "read_docx"
-                | "read_pdf"
                 | "glob"
                 | "grep"
                 | "diff"

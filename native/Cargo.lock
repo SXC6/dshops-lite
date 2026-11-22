@@ -208,11 +208,8 @@ version = "0.5.4"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
- "ops-batch",
- "ops-documents",
  "ops-files",
  "ops-protocol",
- "ops-results",
  "ops-search",
  "serde_json",
 ]
