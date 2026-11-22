@@ -1,6 +1,6 @@
 # 构建与工程说明
 
-面向要重建原生 worker、替换二进制、或二次裁剪这个包的人。日常使用看 [README.md](../README.md)；取舍与已完成项看 [OPTIMIZATION.md](../OPTIMIZATION.md)。
+面向要重建原生 worker、替换二进制、或二次裁剪这个包的人。日常使用看 [README.md](../README.md)；取舍与已完成项看仓库里的 [OPTIMIZATION.md](../OPTIMIZATION.md)（**不随 tarball 发布**）。
 
 ## Git Bash 的发现顺序
 
@@ -19,13 +19,14 @@
 
 ## 原生 worker 与 provenance
 
-工具本体是 Rust（上游 MIT 代码，`native/` 随包保留源码）。`runtime/<target>/dsh-ops-worker.exe` 是从 `native/` 源码构建的，不是上游预编译二进制。
+工具本体是 Rust（上游 MIT 代码）。**Rust 源码只存在于仓库中，不随包发布**：`files` 只打包 `runtime/` 下的成品二进制，`native/` 不在发布的 tarball 里。`runtime/<target>/dsh-ops-worker.exe` 是从仓库 `native/` 的源码构建的，不是上游预编译二进制。
 
 `runtime/win32-x64/provenance.json` 记录 `target` / `executable` / `sha256`。`lib/worker.js` 在加载时校验这三项：二进制被改过、或 receipt 指向别的 target，都会直接拒绝运行。没有 receipt 时只提示、不拒绝，但**换了二进制不重写 receipt 会被拒绝**。
 
 ## 构建步骤
 
 ```console
+# 以下步骤需要仓库检出：native/ 不在发布的 tarball 里
 cd native
 cargo build --release --locked
 # 产物：native/target/release/dsh-ops-worker.exe
@@ -34,7 +35,7 @@ cargo build --release --locked
 powershell -ExecutionPolicy Bypass -File ..\scripts\stage-worker.ps1
 ```
 
-`stage-worker.ps1` 也可以用 `-Source <path>` 指定别处的产物；它把文件复制到 `runtime/win32-x64/dsh-ops-worker.exe`，并以 `package.json` 的 `version` 重写 receipt。**这一步必须做**，否则校验会拒绝新二进制。
+`stage-worker.ps1` 也可以用 `-Source <path>` 指定别处的产物；它把文件复制到 `runtime/win32-x64/dsh-ops-worker.exe`，并以 `package.json` 的 `version` 重写 receipt。**这一步必须做**，否则校验会拒绝新二进制。脚本默认的 `-Source` 指向 `native/target/release/`，所以不带 `-Source` 时只能在仓库检出里用；从 tarball 安装的副本没有 `native/`，要用 `-Source` 指向自建产物（`scripts/`、`runtime/` 与 `package.json` 都随包发布）。
 
 ## 构建环境
 
@@ -45,6 +46,7 @@ powershell -ExecutionPolicy Bypass -File ..\scripts\stage-worker.ps1
 | Rust | **1.99.0**，`x86_64-pc-windows-gnu` | `native/rust-toolchain.toml` 固定 1.99.0（满足 crate 的 `rust-version = "1.88"`） |
 | crates 源 | rsproxy 稀疏镜像 | `~/.cargo/config.toml` 里做 source replacement |
 | binutils | MinGW-w64（需含 `as.exe`） | **必需**，见下 |
+| binutils 路径（本机） | `D:\toolchains\mingw64\bin` | 不在 `PATH` 上：全新（非增量）构建前先 `PATH="/d/toolchains/mingw64/bin:$PATH" cargo build --release --locked`，否则报 `error calling dlltool 'dlltool.exe': program not found`；增量构建不需要 |
 
 binutils 那一行是构建里最容易踩的坑：rustc 自带的 `dlltool.exe` 生成 import library 时要调用 `as`，而 toolchain 的 `self-contained` 目录里没有 `as.exe`，会报 `dlltool ... CreateProcess` 失败。构建时把 MinGW 的 `bin` 放到 `PATH` 前面，且**不要**把 toolchain 的 `self-contained` 放进 `PATH`，否则 rustc 会选那个缺 `as` 的 dlltool。
 
@@ -57,9 +59,10 @@ binutils 那一行是构建里最容易踩的坑：rustc 自带的 `dlltool.exe`
 strip = true
 lto = "thin"
 codegen-units = 1
+panic = "abort"
 ```
 
-体积变化：未优化 **7.84 MiB** → 仅 strip **5.34 MiB** → 三项齐上 **3.41 MiB**，比上游发布的 3.91 MiB 还小。当前 `runtime/win32-x64/dsh-ops-worker.exe` 即按此配置构建。
+体积变化：未优化 **7.84 MiB** → 仅 strip **5.34 MiB** → 前三项齐上 **3.41 MiB**，比上游发布的 3.91 MiB 还小。再裁掉不可达依赖（见「进一步裁剪」）并加上 `panic = "abort"` 后，本次 release 构建为 **2,463,744 字节（约 2.35 MiB，−31.1%）**；`runtime/win32-x64/dsh-ops-worker.exe` 由 `stage-worker.ps1` 从该产物复制。
 
 ## 构建缓存
 
@@ -88,15 +91,23 @@ powershell -Command "Remove-Item -Recurse -Force native\target"
 workerPath: 'D:\builds\dshops-lite\dsh-ops-worker.exe'
 ```
 
-适合临时验证自建二进制。要正式随包发布，仍应走 `stage-worker.ps1` 更新 `runtime/` 与 receipt。
+适合临时验证自建二进制。要正式随包发布，仍应走 `stage-worker.ps1` 更新 `runtime/` 与 receipt（见「构建步骤」）。
 
 ## 进一步裁剪
 
-`native/src/lib.rs` 的 `execute()` 里，`read_table` / `read_docx` / `read_pdf` 走 `ops_documents`，而本插件从不发送这三个 op。若要连带去掉 `ops-documents` 依赖（可省 `zip` / `quick-xml` / `flate2` 一整串），删掉该分支和 `native/Cargo.toml` 里对应的一行即可。默认保留原样，未做该裁剪。
+`native/` 原先还接入了三条本插件永远够不到的依赖：
+
+- `ops-documents`：`read_table` / `read_docx` / `read_pdf` 三个文档读 op——本插件从不发送这些工具名；
+- `ops-batch`：worker 自己的 `batch`——批量由 JS 侧 `ops_batch` 实现，不走 worker 的 batch；
+- `ops-results`：`result` / 审计存储——本插件不发布 `ops_result` 工具，`ops_results::spill::finish` 从未真正产生输出。
+
+现在它们都已移除：`native/Cargo.toml` 去掉了这三条 path 依赖，`native/src/lib.rs` 去掉了文档工具分支、`ops_results::spill::finish` 调用与 `batch` / `result` 分支，`native/src/main.rs` 的 `may_mutate` 也去掉了文档工具；`execute()` 只保留文件/搜索 op，其余工具名一律 `INVALID_ARGUMENT`。crate 目录与 workspace 成员列表保留，不影响构建。
+
+实测：worker 二进制 **3,574,784 B（3.41 MiB）→ 2,463,744 B（2.35 MiB）**，即 **−1,111,040 B（−31.1%）**；加上 `panic = "abort"` 后 `.pdata + .xdata`（unwind 表）从 **178,108 B** 降到 **71,332 B**。注意：从 `[dependencies]` 去掉这三项**不会**减少 `Cargo.lock` 的包数（仍是 149），因为它们仍是 `[workspace]` 成员；收益只在链接进二进制的部分。
 
 ## 安装与重载
 
-本包是无依赖的 Host + Client bundle（纯 ESM，无构建步骤：`client.js` 手写为客户端模块系统的 lazy-CJS factory 格式）。开发对应的宿主是 DSH `0.2.2-rc.5`；`engines.dsh` 声明 `>=0.2.2-rc.1 <0.2.3-0`（窄窗口是有意的，理由见 [OPTIMIZATION.md](OPTIMIZATION.md) 的 C1）。
+本包是无依赖的 Host + Client bundle（纯 ESM，无构建步骤：`client.js` 手写为客户端模块系统的 lazy-CJS factory 格式）。开发对应的宿主是 DSH `0.2.2-rc.5`；`engines.dsh` 声明 `>=0.2.2-rc.1 <0.2.3-0`（窄窗口是有意的，理由见仓库里的 `OPTIMIZATION.md` C1，该文件不随 tarball 发布）。
 
 ```console
 # 用插件管理器安装本地目录，或 Plugins → Add plugin 选包目录
@@ -115,6 +126,8 @@ plugin_manager install_bundle  <repo>
 4. 插件行的「配置」里能看到「默认终端」页，保存后立即按新终端工作。
 
 ## 自检
+
+下面三条脚本位于仓库根目录，不随 tarball 发布。
 
 ```console
 node _selftest.mjs      # 伪宿主 + 真实 worker，跑主要读取/搜索/批量/终端路径

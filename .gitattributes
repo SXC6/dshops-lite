@@ -1,0 +1,12 @@
+# Normalize text content to LF in the repository.
+* text=auto eol=lf
+
+# PowerShell scripts are checked out with CRLF so Windows editors and Git agree.
+*.ps1 text eol=crlf
+
+# Compiled artifacts are opaque bytes; never normalize or diff them as text.
+*.exe binary
+
+# JSON (package metadata, provenance receipts) is LF in the repository;
+# the scripts that generate it must not emit CRLF.
+*.json text eol=lf

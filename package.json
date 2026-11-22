@@ -4,7 +4,13 @@
   "private": true,
   "type": "module",
   "description": "A lean DSH plugin: native ops_* file tools over a Rust worker, plus Git Bash as an optional default terminal. No bundled bash payload.",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "ops-tools", "native-file-tools", "git-bash", "windows"],
   "license": "MIT",
+  "author": "SXC6 <84656034+SXC6@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SXC6/dshops-lite.git"
+  },
   "main": "index.js",
   "scripts": {
     "test": "node --check client.js && node _selftest.mjs && node _failtest.mjs && node _clienttest.mjs"
@@ -13,6 +19,7 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
@@ -25,10 +32,8 @@
     "cordis.patch.yml",
     "runtime",
     "README.md",
-    "OPTIMIZATION.md",
-    "_selftest.mjs",
-    "_failtest.mjs",
-    "_clienttest.mjs"
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "dsh": {
     "bundle": {
@@ -47,6 +52,7 @@
     }
   },
   "engines": {
+    "node": ">=18",
     "dsh": ">=0.2.2-rc.1 <0.2.3-0"
   }
 }
